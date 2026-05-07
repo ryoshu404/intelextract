@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intelextract"
+version = "0.1.0"
+description = "CLI for extracting structured threat intel from threat reports via the Anthropic API."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+    { name = "R. Santos" },
+]
+keywords = ["threat-intelligence", "security", "anthropic", "claude", "ioc-extraction", "mitre-attack"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+]
+dependencies = [
+    "anthropic>=0.39",
+    "httpx>=0.27",
+    "trafilatura>=1.12",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+intelextract = "intelextract.cli:main"
+
+[project.urls]
+Repository = "https://github.com/ryoshu404/intelextract"
+
+[tool.setuptools.packages.find]
+where = ["src"]
