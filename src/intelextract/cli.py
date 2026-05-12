@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-
 import argparse
+import time
 import importlib.metadata
+from datetime import datetime, timezone
 
-from intelextract.extractor import extract
-from intelextract.fetcher import fetch_url
+
+from .extractor import MODEL, extract
+from .fetcher import fetch_url
+from .models import Extraction, ExtractionMetadata, Source
 
 
 try:
@@ -32,10 +35,23 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    input_to_pass = args.text
     if args.url:
-        input_to_pass = fetch_url(args.url)
-    extraction = extract(input_to_pass)
+        text = fetch_url(args.url)
+        source_url = args.url
+    else:
+        text = args.text
+        source_url = None
+    fetched_at = datetime.now(timezone.utc)
+    start = time.perf_counter()
+    content = extract(text)
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+    extraction = Extraction(
+        source=Source(url=source_url, title=None, fetched_at=fetched_at),
+        extraction=content,
+        extraction_metadata=ExtractionMetadata(model=MODEL, extraction_time_ms=elapsed_ms),
+        )
+
     print(extraction.model_dump_json(indent=2))
 
 
