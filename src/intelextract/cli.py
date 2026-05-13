@@ -43,14 +43,18 @@ def main():
         source_url = None
     fetched_at = datetime.now(timezone.utc)
     start = time.perf_counter()
-    content = extract(text)
+    content, usage = extract(text)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     extraction = Extraction(
         source=Source(url=source_url, title=None, fetched_at=fetched_at),
         extraction=content,
-        extraction_metadata=ExtractionMetadata(model=MODEL, extraction_time_ms=elapsed_ms),
-        )
+        extraction_metadata=ExtractionMetadata(
+            model=MODEL,
+            extraction_time_ms=elapsed_ms,
+            usage=usage,
+            ),
+            )
 
     print(extraction.model_dump_json(indent=2))
 

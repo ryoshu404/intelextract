@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from anthropic import Anthropic
 
-from .models import ExtractionContent
+from .models import ExtractionContent, Usage
 
 MODEL = "claude-sonnet-4-6"
+MAX_TOKENS = 4096
 TOOL_NAME = "record_extraction"
 
 PROMPT_TEMPLATE = """Extract threat intelligence from the following report. Use the {tool_name} tool.
@@ -19,7 +20,11 @@ Report:
 {text}"""
 
 
-def extract(text: str) -> ExtractionContent:
+class ExtractionTruncatedError(Exception):
+    """Raised when the model's response was truncated by max_tokens."""
+
+
+def extract(text: str) -> tuple[ExtractionContent, Usage]:
     client = Anthropic()
     tool = {
         "name": TOOL_NAME,
@@ -29,12 +34,24 @@ def extract(text: str) -> ExtractionContent:
     prompt = PROMPT_TEMPLATE.format(tool_name=TOOL_NAME, text=text)
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=MAX_TOKENS,
         tools=[tool],
         tool_choice={"type": "tool", "name": TOOL_NAME},
         messages=[{"role": "user", "content": prompt}],
     )
+
+    if response.stop_reason == "max_tokens":
+        raise ExtractionTruncatedError(
+            f"Model response was truncated (hit max_tokens={MAX_TOKENS})."
+        )
+
+    usage = Usage(
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+    )
+
     for block in response.content:
         if block.type == "tool_use":
-            return ExtractionContent(**block.input)
+            content = ExtractionContent(**block.input)
+            return content, usage
     raise RuntimeError("No tool_use block in response")

@@ -11,6 +11,7 @@ from intelextract.models import (
     Hashes,
     IOCs,
     Source,
+    Usage
     )
 
 
@@ -110,8 +111,22 @@ def test_extraction_wrapper_constructs():
             affected_sectors=[],
             affected_regions=[],
             ),
-        extraction_metadata=ExtractionMetadata(model="claude-sonnet-4-6", extraction_time_ms=1234),
-        )
+        extraction_metadata=ExtractionMetadata(
+            model="claude-sonnet-4-6",
+            extraction_time_ms=1234,
+            usage=Usage(input_tokens=500, output_tokens=200),
+        ),
+    )
 
     assert extraction.source.url == "https://example.com"
     assert extraction.extraction_metadata.extraction_time_ms == 1234
+
+
+def test_extraction_metadata_requires_usage():
+    with pytest.raises(ValidationError):
+        ExtractionMetadata(model="claude-sonnet-4-6", extraction_time_ms=1000)
+
+
+def test_usage_required_fields():
+    with pytest.raises(ValidationError):
+        Usage(input_tokens=500)

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from intelextract.extractor import extract
+from intelextract.extractor import extract, ExtractionTruncatedError
 
 
 def _make_tool_use_response(tool_input: dict):
@@ -34,18 +34,20 @@ def _valid_tool_input():
 
 
 @patch("intelextract.extractor.Anthropic")
-def test_extract_returns_extraction_content(mock_anthropic):
+def test_extract_returns_content_and_usage(mock_anthropic):
+    response = _make_tool_use_response(_valid_tool_input())
+    response.stop_reason = "tool_use"
+    response.usage = MagicMock(input_tokens=500, output_tokens=200)
+    mock_anthropic.return_value.messages.create.return_value = response
 
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = _make_tool_use_response(_valid_tool_input())
-    mock_anthropic.return_value = mock_client
+    content, usage = extract("some threat report text")
 
-    result = extract("some threat report text")
-
-    assert result.threat_actors == ["APT41"]
-    assert result.malware_families == ["Cobalt Strike"]
-    assert result.iocs.ips == ["203.0.113.45"]
-    assert result.attack_techniques[0].id == "T1059"
+    assert content.threat_actors == ["APT41"]
+    assert content.malware_families == ["Cobalt Strike"]
+    assert content.iocs.ips == ["203.0.113.45"]
+    assert content.attack_techniques[0].id == "T1059"
+    assert usage.input_tokens == 500
+    assert usage.output_tokens == 200
 
 
 @patch("intelextract.extractor.Anthropic")
@@ -56,6 +58,8 @@ def test_extract_raises_when_no_tool_use_block(mock_anthropic):
 
     response = MagicMock()
     response.content = [text_block]
+    response.stop_reason = "tool_use"
+    response.usage = MagicMock(input_tokens=0, output_tokens=0)
 
     mock_client = MagicMock()
     mock_client.messages.create.return_value = response
@@ -83,4 +87,14 @@ def test_extract_raises_validation_error_on_malformed_tool_input(mock_anthropic)
     mock_anthropic.return_value = mock_client
 
     with pytest.raises(ValidationError):
+        extract("some text")
+
+
+@patch("intelextract.extractor.Anthropic")
+def test_extract_raises_on_max_tokens_stop_reason(mock_anthropic):
+    response = MagicMock()
+    response.stop_reason = "max_tokens"
+    mock_anthropic.return_value.messages.create.return_value = response
+
+    with pytest.raises(ExtractionTruncatedError):
         extract("some text")
