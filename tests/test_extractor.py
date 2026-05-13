@@ -98,3 +98,19 @@ def test_extract_raises_on_max_tokens_stop_reason(mock_anthropic):
 
     with pytest.raises(ExtractionTruncatedError):
         extract("some text")
+
+
+@patch("intelextract.extractor.Anthropic")
+def test_extract_sends_system_prompt_and_report_delimiters(mock_anthropic):
+    response = _make_tool_use_response(_valid_tool_input())
+    response.stop_reason = "tool_use"
+    response.usage = MagicMock(input_tokens=500, output_tokens=200)
+    mock_anthropic.return_value.messages.create.return_value = response
+
+    extract("malicious report content here")
+
+    call_kwargs = mock_anthropic.return_value.messages.create.call_args.kwargs
+    assert "system" in call_kwargs
+    assert "<report>" in call_kwargs["messages"][0]["content"]
+    assert "</report>" in call_kwargs["messages"][0]["content"]
+    assert "malicious report content here" in call_kwargs["messages"][0]["content"]
