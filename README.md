@@ -17,19 +17,23 @@ intelextract implements the following capabilities:
 - ATT&CK technique extraction (id + name)
 - Nested IOC structure (hashes, IPs, domains, URLs, filenames)
 - First-occurrence-wins deduplication on string fields and technique IDs
-- Explicit `ValidationError` on malformed model output (no silent fallback)
+- Explicit failure modes: `ValidationError` on malformed output, `ExtractionTruncatedError` on token-limit truncation, `RuntimeError` on missing tool_use block
+- Token usage telemetry (input and output tokens) in the output envelope
+- URL provenance — captures `final_url` after redirects alongside the requested URL
+- Configurable User-Agent via `--user-agent`
+- Prompt-injection defenses via explicit system prompt and `<report>...</report>` content delimiters
 - Source provenance and extraction metadata in the output envelope
 
 ---
 
 # What It Doesn't Do
 
-intelextract is intentionally narrow in v1:
+intelextract is intentionally narrow:
 
 - No multi-document correlation. Each invocation processes one document.
-- No source-text presence validation. Extracted entities are not verified against the source text. (v1.1 scope.)
-- No prompt-injection defenses beyond the structured tool contract. (v1.1 scope.)
-- No IOC format validation. Hash lengths, IP formats, and domain patterns are accepted as the model emits them. (v1.1 scope.)
+- No source-text presence validation. Extracted entities are not verified against the source text. (v1.2 scope.)
+- No IOC format validation. Hash lengths, IP formats, and domain patterns are accepted as the model emits them. (v1.2 scope.)
+- No URL reputation checking. The fetcher trusts the operator-supplied URL. (v1.2 scope.)
 - No streaming. Single API call per invocation; full response or explicit failure.
 - No persistent state. No cache, no database, no retry layer beyond what the SDK provides.
 
@@ -44,7 +48,7 @@ Fetcher (URL mode only)
 ↓
 Extractor
 ↓
-Anthropic API (forced tool_choice)
+Anthropic API (system prompt + forced tool_choice)
 ↓
 Pydantic validation
 ↓
@@ -57,8 +61,8 @@ Each component is responsible for a single concern:
 
 | Component | Responsibility |
 |-----------|----------------|
-| fetcher | Retrieves URL content via httpx; extracts main article text via trafilatura |
-| extractor | Constructs API request, forces tool use, parses tool_use response, validates via Pydantic |
+| fetcher | Retrieves URL content via httpx; extracts main article text via trafilatura; returns text and final URL after redirects |
+| extractor | Constructs API request with system prompt and report delimiters, forces tool use, parses tool_use response, validates via Pydantic, surfaces token usage |
 | models | Defines the extraction schema; generates the Anthropic tool's input_schema from the same Pydantic model |
 | cli | Argument parsing, mode selection (URL vs text), wraps extraction with source and metadata envelope |
 
@@ -80,9 +84,16 @@ Benefits:
 
 The API call sets `tool_choice` to require the model to emit a `record_extraction` tool_use block. This eliminates the "did the model decide to use the tool?" branch — every successful call yields structured output, every malformed output raises explicitly.
 
-## ValidationError as Explicit Failure Mode
+## Explicit Failure Modes
 
-When the model emits content that doesn't conform to the schema, Pydantic raises `ValidationError`. This is desired behavior. Downstream automation can rely on either valid structured output or an explicit exception — never silently malformed data.
+The extractor and fetcher surface every failure as a typed exception:
+
+- `pydantic.ValidationError` — model emitted content that doesn't conform to the schema
+- `ExtractionTruncatedError` — `stop_reason == "max_tokens"`, response was truncated
+- `RuntimeError` — response contained no `tool_use` block (unexpected API behavior)
+- `ValueError` — trafilatura extracted no content from the fetched URL
+
+None of these are silent fallbacks. Downstream automation can rely on either valid structured output or an explicit exception by type. Each failure mode maps to a different remediation: truncation is retryable with shorter input, validation errors indicate API-contract drift or LLM emitting non-conforming output, no-tool-use-block is genuinely unexpected API behavior, and empty content is an input-quality problem.
 
 ## Single Call, No Streaming
 
@@ -99,6 +110,20 @@ When duplicate technique entries share an ID (e.g., `T1059.001` emitted twice wi
 ## Prompt Strategy — Don't Invent, Don't Refuse
 
 Initial prompt framing was "leave fields empty if not specifically named." This caused over-conservative extraction during corpus testing — the model dropped legitimate entities when uncertain. Final framing inverts the constraint: "do not invent generic placeholder values; when specific values appear in the text, extract them." This recovered legitimate extractions while preserving placeholder and qualifier suppression.
+
+## Prompt-Injection Defenses
+
+The Anthropic API call passes an explicit `system` parameter framing user-message content as data not instructions. The report text in the user message is wrapped in `<report>...</report>` delimiters. The system prompt explicitly names common injection patterns — instructions, system messages, role declarations, directives addressed to the model — rather than relying on a generic "treat as data" framing.
+
+The defense relies on the API's privilege gradient: the `system` parameter is treated by the model as more authoritative than instructions appearing in user-message content. Putting the defensive framing in the system prompt and the report content (potentially adversarial) in the user message means an attacker controlling the report content can't reach up and override the framing.
+
+This is one of three layers: (1) forced `tool_choice` constrains output shape; (2) system prompt and delimiters constrain interpretation; (3) Pydantic schema validation constrains structure. Source-presence validation — verifying that extracted entities actually appear in the source text — is a fourth layer scoped for v1.2.
+
+## URL Provenance
+
+The `Source` envelope captures both `url` (the URL requested) and `final_url` (the URL httpx resolved to after redirects). For threat intelligence, the URL the content actually came from matters more than the URL requested — redirects can canonicalize tracking parameters, change geographic routing, or in adversarial cases serve content from a different destination. Surfacing both makes redirect chains visible without requiring the consumer to re-fetch.
+
+The User-Agent header is configurable via `--user-agent`. The default follows the Googlebot convention — `intelextract/<version> (+https://github.com/ryoshu404/intelextract)` — so sysadmins seeing this UA in logs can identify the source without guessing.
 
 ## httpx and trafilatura for Fetching
 
@@ -171,6 +196,11 @@ Extract from raw text:
 intelextract --text "threat report content here..."
 ```
 
+Extract with a custom User-Agent (e.g., for operator identification when coordinating with site owners):
+```bash
+intelextract --url https://example.com/threat-report --user-agent "MyOrg-IR-Bot/1.0 (contact@myorg.example)"
+```
+
 View available options:
 ```bash
 intelextract --help
@@ -186,8 +216,9 @@ Example output:
 {
   "source": {
     "url": "https://example.com/threat-report",
+    "final_url": "https://example.com/threat-report",
     "title": null,
-    "fetched_at": "2026-05-12T15:30:00.000000+00:00"
+    "fetched_at": "2026-05-13T15:30:00.000000+00:00"
   },
   "extraction": {
     "iocs": {
@@ -212,7 +243,11 @@ Example output:
   },
   "extraction_metadata": {
     "model": "claude-sonnet-4-6",
-    "extraction_time_ms": 4231
+    "extraction_time_ms": 4231,
+    "usage": {
+      "input_tokens": 7800,
+      "output_tokens": 1100
+    }
   }
 }
 ```
@@ -221,28 +256,36 @@ Example output:
 
 # Known Limitations
 
-**No source-text presence validation.** Entities returned by the model are not currently verified against the source document. The forced tool_choice contract constrains shape, not content. Scoped for v1.1.
+**No source-text presence validation.** Entities returned by the model are not verified against the source document. The system prompt and forced tool_choice constrain shape and discourage invention, but don't guarantee extracted entities are actually present in the source. Scoped for v1.2.
 
-**No IOC format validation.** Hash lengths, IP formats, and domain patterns are accepted as the model emits them. Observed failure mode during corpus testing: a TLS certificate SHA-1 fingerprint formatted with colon separators was classified as a SHA-1 hash. Scoped for v1.1.
+**No IOC format validation.** Hash lengths, IP formats, and domain patterns are accepted as the model emits them. Observed failure mode during corpus testing: a TLS certificate SHA-1 fingerprint formatted with colon separators was classified as a SHA-1 hash. Scoped for v1.2.
 
 **Internal and infrastructure IPs extracted as IOCs.** RFC1918 ranges, AWS metadata IPs (169.254.169.254), and well-known public DNS resolvers (1.1.1.1, 8.8.8.8) appear in IOC output when present in the source. A `--strict-ioc` flag to filter these is v1.2 scope.
 
 **Tools-vs-malware ambiguity.** Penetration testing tools used by attackers (Mimikatz, Impacket, PsExec, Crackmapexec) appear in `malware_families`. A schema split separating `tools_used` from `malware_families` is v1.2 scope.
 
-**Output bounded by max_tokens.** Long reports may exceed the model's response token budget. The current implementation does not check `stop_reason` and may parse truncated responses. Scoped for v1.1.
+**Output bounded by `max_tokens=4096`.** Long reports producing many entities may hit the response token budget and raise `ExtractionTruncatedError`. A configurable `--max-tokens` flag is a v1.2 candidate.
+
+**No URL reputation checking.** The fetcher trusts the operator-supplied URL. `final_url` is captured for provenance, but no automatic reputation check is performed against threat-intel sources. Scoped for v1.2.
 
 ---
 
-# What's Planned (v1.1)
+# What's Shipped (v1.1)
 
-Operational hardening based on observed v1 failure modes:
+Operational hardening across three dimensions:
 
-- **Token handling.** Check `stop_reason` and raise `ExtractionTruncatedError` on truncation. Capture `usage` telemetry (input and output tokens) in extraction metadata.
-- **IOC format validation.** Regex validation per IOC subfield (hash length, IPv4/IPv6 via the `ipaddress` module, domain format). Malformed values dropped with warnings appended to extraction metadata.
-- **URL provenance.** Log final URL after redirects in the source envelope. Configurable User-Agent.
-- **Prompt-injection defenses.** Explicit system prompt framing report content as data not instructions. Content delimiters in user messages.
+- **Token handling.** `stop_reason` checked; `ExtractionTruncatedError` raised on truncation; `usage` telemetry (input and output tokens) captured in extraction metadata.
+- **URL provenance.** `final_url` captured after redirects in the source envelope; configurable `--user-agent` flag with default identifying the tool, version, and repository.
+- **Prompt-injection defenses.** Explicit system prompt framing report content as data not instructions; report text wrapped in `<report>...</report>` content delimiters in user messages.
 
-Source-presence validation, URL reputation checks, and the `--strict-ioc` flag are documented as v1.2 candidates.
+# What's Planned (v1.2)
+
+- **Source-presence validation.** Verify extracted entities appear in source text. Open design questions on normalization (defanging, case sensitivity, partial matching, paraphrase tolerance) — to be anchored by corpus testing rather than chosen arbitrarily.
+- **IOC format validation.** Regex per IOC subfield (hash lengths, IPv4/IPv6 via the `ipaddress` module, domain format). Malformed values dropped with warnings appended to extraction metadata.
+- **URL reputation check.** Optional flag-gated provider integration (URLhaus or similar). Provider choice and failure-mode behavior to be designed deliberately.
+- **`--strict-ioc` flag.** Filter internal and infrastructure IPs (RFC1918, AWS metadata, public DNS resolvers).
+- **`tools_used` vs `malware_families` schema split.** Separate penetration-testing tooling from malware families.
+- **`--max-tokens` flag.** Allow operator override of the default 4096 output token budget.
 
 ---
 
