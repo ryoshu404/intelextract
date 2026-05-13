@@ -16,6 +16,7 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
             result.append(item)
     return result
 
+
 class Hashes(BaseModel):
     md5: list[str]
     sha1: list[str]
@@ -63,6 +64,7 @@ class ExtractionContent(BaseModel):
 
 class Source(BaseModel):
     url: str | None
+    final_url: str | None = None
     title: str | None
     fetched_at: datetime
 
@@ -76,6 +78,7 @@ class ExtractionMetadata(BaseModel):
     model: str
     extraction_time_ms: int
     usage: Usage
+
 
 class Extraction(BaseModel):
     source: Source
