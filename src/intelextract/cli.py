@@ -19,6 +19,9 @@ except importlib.metadata.PackageNotFoundError:
     VERSION = 'unknown'
 
 
+DEFAULT_USER_AGENT = f"intelextract/{VERSION} (+https://github.com/ryoshu404/intelextract)"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="intelextract",
@@ -29,6 +32,11 @@ def parse_args() -> argparse.Namespace:
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--url", help="URL of threat research to fetch and extract from")
     input_group.add_argument("--text", help="Pasted text to extract from directly")
+    parser.add_argument(
+        "--user-agent",
+        default=DEFAULT_USER_AGENT,
+        help="User-Agent header for URL fetching",
+        )
     parser.add_argument("-v", "--version", action="version", version=f"intelextract {VERSION}")
     return parser.parse_args()
 
@@ -36,18 +44,19 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
     if args.url:
-        text = fetch_url(args.url)
+        text, final_url = fetch_url(args.url, user_agent=args.user_agent)
         source_url = args.url
     else:
         text = args.text
         source_url = None
+        final_url = None
     fetched_at = datetime.now(timezone.utc)
     start = time.perf_counter()
     content, usage = extract(text)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     extraction = Extraction(
-        source=Source(url=source_url, title=None, fetched_at=fetched_at),
+        source=Source(url=source_url, final_url=final_url, title=None, fetched_at=fetched_at),
         extraction=content,
         extraction_metadata=ExtractionMetadata(
             model=MODEL,

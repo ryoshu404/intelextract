@@ -5,13 +5,11 @@ from __future__ import annotations
 import httpx
 import trafilatura
 
-USER_AGENT = "intelextract"
 
-
-def fetch_url(url: str, timeout: float = 30.0) -> str:
+def fetch_url(url: str, user_agent: str, timeout: float = 30.0) -> tuple[str, str]:
     response = httpx.get(
         url,
-        headers={'User-Agent': USER_AGENT},
+        headers={"User-Agent": user_agent},
         follow_redirects=True,
         timeout=timeout,
     )
@@ -19,6 +17,6 @@ def fetch_url(url: str, timeout: float = 30.0) -> str:
 
     text = trafilatura.extract(response.text)
     if not text:
-        raise ValueError(f'No content extracted from {url}')
+        raise ValueError(f"No content extracted from {url}")
 
-    return text
+    return text, str(response.url)
