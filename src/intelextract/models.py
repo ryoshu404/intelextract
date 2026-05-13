@@ -67,10 +67,15 @@ class Source(BaseModel):
     fetched_at: datetime
 
 
+class Usage(BaseModel):
+    input_tokens: int
+    output_tokens: int
+
+
 class ExtractionMetadata(BaseModel):
     model: str
     extraction_time_ms: int
-
+    usage: Usage
 
 class Extraction(BaseModel):
     source: Source
