@@ -44,19 +44,20 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
     if args.url:
-        text, final_url = fetch_url(args.url, user_agent=args.user_agent)
+        text, final_url, title = fetch_url(args.url, user_agent=args.user_agent)
         source_url = args.url
     else:
         text = args.text
         source_url = None
         final_url = None
+        title = None
     fetched_at = datetime.now(timezone.utc)
     start = time.perf_counter()
     content, usage = extract(text)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     extraction = Extraction(
-        source=Source(url=source_url, final_url=final_url, title=None, fetched_at=fetched_at),
+        source=Source(url=source_url, final_url=final_url, title=title, fetched_at=fetched_at),
         extraction=content,
         extraction_metadata=ExtractionMetadata(
             model=MODEL,
